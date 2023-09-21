@@ -14,12 +14,11 @@
 #include <WinUser.h>
 #include <wingdi.h>
 #pragma comment(lib, "User32.lib")
-
 #pragma comment(lib, "Shcore.lib")
 #pragma comment(lib, "Pathcch.lib")
 #define IDM_EXIT 1
 #define IDM_SHOW 2
-
+#define IDM_CHECKBOX 3
 #define WMU_TRAY_ICON_MESSAGE (WM_USER+1)
 #define CLASS_NAME "UnvisibleHandlerWin"
 
@@ -29,9 +28,48 @@ DPI_AWARENESS oldDpiAwareness = GetAwarenessFromDpiAwarenessContext(oldContext);
 
 using namespace std;
 vector<int> hotkeys;
+bool registered;
 DEVICE_SCALE_FACTOR value;
 NOTIFYICONDATA nid = {};
 DpiHelper::DPIScalingInfo dpiInfo = {};
+int GetRecommendedDPIScaling()
+{
+    int dpi = 0;
+    auto retval = SystemParametersInfo(SPI_GETLOGICALDPIOVERRIDE, 0, (LPVOID)&dpi, 1);
+
+    if (retval != 0)
+    {
+        int currDPI = DpiVals[dpi * -1];
+        return currDPI;
+    }
+
+    return -1;
+}
+
+void SetDpiScaling(int percentScaleToSet)
+{
+    int recommendedDpiScale = GetRecommendedDPIScaling();
+
+    if (recommendedDpiScale > 0)
+    {
+        int index = 0, recIndex = 0, setIndex = 0;
+        for (const auto& scale : DpiVals)
+        {
+            if (recommendedDpiScale == scale)
+            {
+                recIndex = index;
+            }
+            if (percentScaleToSet == scale)
+            {
+                setIndex = index;
+            }
+            index++;
+        }
+
+        int relativeIndex = setIndex - recIndex;
+        SystemParametersInfo(SPI_SETLOGICALDPIOVERRIDE, relativeIndex, (LPVOID)0, 1);
+    }
+}
 BOOL IsMyProgramRegisteredForStartup(PCWSTR pszAppName)
 {
     HKEY hKey = NULL;
@@ -366,8 +404,9 @@ LRESULT CALLBACK TrayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
     std::wstring test1;
     LPCWSTR sw;
     static HMENU hMenu;
-
-
+    bool a1;
+    MENUITEMINFO menuItem = { 0 };
+    MENUITEMINFO menuItem1 = { 1 };
     switch (msg)
     {
 
@@ -378,7 +417,25 @@ LRESULT CALLBACK TrayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         sw = test1.c_str();
         hMenu = CreatePopupMenu();
         AppendMenu(hMenu, MF_DISABLED, IDM_SHOW, sw);
+        AppendMenu(hMenu, MF_STRING | MF_CHECKED, IDM_CHECKBOX, L"Автозапуск");
         AppendMenu(hMenu, MF_STRING, IDM_EXIT, L"Выход");
+       
+        menuItem.cbSize = sizeof(MENUITEMINFO);
+        menuItem.fMask = MIIM_STATE;
+        menuItem1.cbSize = sizeof(MENUITEMINFO);
+        menuItem1.fMask = MIIM_FTYPE;
+
+        GetMenuItemInfo(hMenu, 1, true, &menuItem);
+        
+        if (registered) {
+            // Checked, uncheck it
+            menuItem.fState = MFS_CHECKED;
+        }
+        else {
+            // Unchecked, check it
+            menuItem.fState = MFS_UNCHECKED;
+        }
+        SetMenuItemInfo(hMenu, 1, true, &menuItem);
         SetMenuDefaultItem(hMenu, IDM_EXIT, FALSE);
     case WM_USER + 1:
 
@@ -393,34 +450,66 @@ LRESULT CALLBACK TrayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
     case WM_HOTKEY:
 
         HandleHotkey(device_name.header.adapterId, device_name.header.id);
-
+        
+        
         Sleep(100);
         stemp = L"Current DPI: ";
         curdpi = to_wstring(dpiInfo.current);
         test1 = stemp + curdpi;
         sw = test1.c_str();
 
-        ModifyMenu(hMenu, 0,
-            MF_BYPOSITION, 1, sw);
-
+        ModifyMenu(hMenu, 0,MF_BYPOSITION | MF_STRING | MF_DISABLED, 1, sw);
+        
         break;
     case WM_COMMAND:
+        
         if (LOWORD(wParam) == IDM_EXIT)
         {
-            // Обработка команды "Выход"
-
+            Sleep(100);
             DestroyWindow(hwnd);
         }
+        if (LOWORD(wParam) == IDM_SHOW)
+        {
+            int a = 1;
+            
+        }
+        if (LOWORD(wParam) == IDM_CHECKBOX)
+        {
+            menuItem.cbSize = sizeof(MENUITEMINFO);
+            menuItem.fMask = MIIM_STATE;
 
+            GetMenuItemInfo(hMenu, 1, true, &menuItem);
+            if (registered) {
+                // убрать регистрацию из регистра
+                wchar_t szPathToExe[MAX_PATH];
+                GetModuleFileNameW(NULL, szPathToExe, MAX_PATH);
+                HKEY hKey;
+                RegOpenKeyEx(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Run", 0, KEY_ALL_ACCESS, &hKey);
+                RegDeleteValue(hKey, L"DpiScaler");
+                menuItem.fState = MFS_UNCHECKED;
+            }
+            else {
+                // зарегистрировать
+                RegisterProgram();
+                menuItem.fState = MFS_CHECKED;
+
+            }
+            SetMenuItemInfo(hMenu, 1, true, &menuItem);
+
+            registered = !registered;
+        }
         break;
+
     case WM_CLOSE:
-        // Shell_NotifyIcon(NIM_DELETE, &nid);
+        
         ShowWindow(hwnd, SW_HIDE);
         break;
     case WM_DESTROY:
         Shell_NotifyIcon(NIM_DELETE, &nid);
+        SetDpiScaling(dpiInfo.current);
         PostQuitMessage(0);
         DestroyWindow(hwnd);
+        
         break;
 
     default:
@@ -443,8 +532,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR szCmdLine
     wstring iniPath = path + iniName;
     std::wifstream iniFile(iniPath);
 
-    RegisterProgram();
-    IsMyProgramRegisteredForStartup(L"DpiScaler");
+    //RegisterProgram();
+    registered = IsMyProgramRegisteredForStartup(L"DpiScaler");
     wstring check = L"[HOTKEYS]";
     if (iniFile.is_open()) {
 
