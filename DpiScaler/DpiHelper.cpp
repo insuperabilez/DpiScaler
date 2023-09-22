@@ -506,7 +506,7 @@ LRESULT CALLBACK TrayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         break;
     case WM_DESTROY:
         Shell_NotifyIcon(NIM_DELETE, &nid);
-        SetDpiScaling(dpiInfo.current);
+        //SetDpiScaling(dpiInfo.current);
         PostQuitMessage(0);
         DestroyWindow(hwnd);
         
